@@ -7,13 +7,27 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import SYMBOLS, TIMEFRAMES, get_settings
+from datetime import datetime, timedelta, timezone
+
+from .analysis import analyze
+from .backtest import run_backtest
+from .config import SYMBOLS, TIMEFRAMES, Settings, get_settings
 from .data_sources import TIMEFRAME_MINUTES, DataSource, DataSourceError, create_source
 from .models import CandleSet, HealthStatus, MultiTimeframe, Tick
+from .news import ForexFactoryProvider, MyfxbookProvider, NewsFilter, NewsProvider
 
 log = logging.getLogger("trading")
 
 MAX_CANDLES = 1000
+ANALYSIS_BARS = 300
+
+
+def create_news_filter(settings: Settings) -> NewsFilter:
+    available = {"myfxbook": MyfxbookProvider, "forexfactory": ForexFactoryProvider}
+    providers: list[NewsProvider] = [
+        available[name.strip()]() for name in settings.news_sources.split(",") if name.strip() in available
+    ]
+    return NewsFilter(providers, window_minutes=settings.news_window_minutes)
 
 
 @asynccontextmanager
@@ -27,6 +41,8 @@ async def lifespan(app: FastAPI):
         except DataSourceError as exc:
             log.error("%s", exc)
         app.state.source = source
+    if getattr(app.state, "news", None) is None:
+        app.state.news = create_news_filter(get_settings())
     yield
     app.state.source.shutdown()
 
@@ -42,6 +58,14 @@ app.add_middleware(
 
 def get_source(request: Request) -> DataSource:
     return request.app.state.source
+
+
+def get_news(request: Request) -> NewsFilter:
+    return request.app.state.news
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _check_symbol(symbol: str) -> str:
@@ -135,3 +159,72 @@ def multi_timeframe(
         )
     except DataSourceError as exc:
         raise HTTPException(502, str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Langkah 2: analisis, berita, backtest
+# ---------------------------------------------------------------------------
+def _analyze_symbol(symbol: str, source: DataSource, news: NewsFilter) -> dict:
+    frames = {tf: source.get_frame(symbol, tf, ANALYSIS_BARS) for tf in TIMEFRAMES}
+    tk = source.get_tick(symbol)
+    result = analyze(symbol, frames, tk.bid, tk.ask, news.check(symbol, tk.time))
+    out = result.as_dict()
+    out["time"] = tk.time.isoformat()
+    out["broker_symbol"] = tk.broker_symbol
+    return out
+
+
+@app.get("/api/analysis/{symbol}")
+def analysis(symbol: str, source: DataSource = Depends(get_source), news: NewsFilter = Depends(get_news)):
+    """Sinyal lengkap satu pair: arah, Entry, SL, TP1/TP2, Confidence Score, dan alasan tiap skor."""
+    symbol = _check_symbol(symbol)
+    _require_connected(source)
+    try:
+        return _analyze_symbol(symbol, source, news)
+    except DataSourceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/analysis")
+def analysis_all(source: DataSource = Depends(get_source), news: NewsFilter = Depends(get_news)):
+    """Ringkasan sinyal ke-7 pair, diurutkan dari Confidence Score tertinggi."""
+    _require_connected(source)
+    rows = []
+    for s in SYMBOLS:
+        try:
+            r = _analyze_symbol(s, source, news)
+            rows.append({k: r[k] for k in ("symbol", "signal", "direction", "confidence", "entry", "stop_loss",
+                                           "take_profit_1", "take_profit_2", "auto_trade_eligible", "warnings")})
+        except (DataSourceError, ValueError) as exc:
+            rows.append({"symbol": s, "signal": "ERROR", "confidence": 0, "warnings": [str(exc)]})
+    return sorted(rows, key=lambda r: r["confidence"], reverse=True)
+
+
+@app.get("/api/news")
+def news_calendar(news: NewsFilter = Depends(get_news), hours: int = Query(24, ge=1, le=168)):
+    """Jadwal berita high impact untuk mata uang 7 pair dalam beberapa jam ke depan."""
+    now = now_utc()
+    currencies = {"USD", "EUR", "GBP", "JPY", "AUD"}
+    events = [
+        e.as_dict() for e in sorted(news.events(), key=lambda e: e.time)
+        if e.impact == "High" and e.currency in currencies and now - news.window <= e.time <= now + timedelta(hours=hours)
+    ]
+    return {"source": news.source, "error": news.error, "events": events,
+            "blocked_symbols": [s for s in SYMBOLS if news.check(s, now)["blocked"]]}
+
+
+@app.get("/api/backtest/{symbol}")
+def backtest(symbol: str, days: int = Query(30, ge=1, le=60), source: DataSource = Depends(get_source)):
+    """Uji strategi di data historis (bisa butuh beberapa detik)."""
+    symbol = _check_symbol(symbol)
+    _require_connected(source)
+    m15_bars = days * 96 + 400
+    try:
+        h4 = source.get_frame(symbol, "H4", m15_bars // 16 + 400)
+        h1 = source.get_frame(symbol, "H1", m15_bars // 4 + 400)
+        m15 = source.get_frame(symbol, "M15", m15_bars)
+    except DataSourceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return run_backtest(symbol, h4, h1, m15, days=days)

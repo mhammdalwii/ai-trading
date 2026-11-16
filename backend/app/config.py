@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     mt5_server: str | None = None
     mt5_path: str | None = None
 
+    # Urutan sumber kalender berita, dipisah koma: myfxbook, forexfactory, none
+    news_sources: str = "myfxbook,forexfactory"
+    news_window_minutes: int = 30
+
     symbol_suffix: str = ""
     symbol_map: dict[str, str] = Field(default_factory=dict)
 

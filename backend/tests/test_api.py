@@ -78,3 +78,57 @@ def test_disconnected_returns_503(client):
     app.state.source.shutdown()
     assert client.get("/api/tick/EURUSD").status_code == 503
     assert client.get("/api/health").json()["connected"] is False
+
+
+# --- Langkah 2 ---------------------------------------------------------------
+from datetime import timedelta  # noqa: E402
+
+from app.news import NewsEvent, NewsFilter, StaticProvider  # noqa: E402
+
+
+@pytest.fixture
+def client_news():
+    source = MockSource(Settings(data_source="mock"), now=FIXED_NOW)
+    source.connect()
+    app.state.source = source
+    app.state.news = NewsFilter([StaticProvider([NewsEvent(FIXED_NOW + timedelta(minutes=10), "JPY", "BoJ Rate", "High")])])
+    with TestClient(app) as c:
+        yield c
+    app.state.source = None
+    app.state.news = None
+
+
+def test_analysis_one(client_news):
+    r = client_news.get("/api/analysis/EURUSD")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["signal"] in ("BUY", "SELL", "WAIT_AND_SEE", "NO_TRADE")
+    assert 0 <= body["confidence"] <= 100
+    assert len(body["factors"]) == 7
+
+
+def test_analysis_news_blocks_usdjpy(client_news):
+    body = client_news.get("/api/analysis/USDJPY").json()
+    assert body["context"]["news"]["blocked"] is True
+    assert body["signal"] in ("WAIT_AND_SEE", "NO_TRADE")
+    assert body["auto_trade_eligible"] is False
+
+
+def test_analysis_all_sorted(client_news):
+    rows = client_news.get("/api/analysis").json()
+    assert len(rows) == 7
+    scores = [r["confidence"] for r in rows]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_news_endpoint(client_news, monkeypatch):
+    monkeypatch.setattr("app.main.now_utc", lambda: FIXED_NOW)
+    body = client_news.get("/api/news").json()
+    assert body["events"][0]["title"] == "BoJ Rate"
+    assert body["blocked_symbols"] == ["USDJPY"]
+
+
+def test_backtest_endpoint(client_news):
+    r = client_news.get("/api/backtest/XAUUSD", params={"days": 5})
+    assert r.status_code == 200
+    assert r.json()["symbol"] == "XAUUSD"

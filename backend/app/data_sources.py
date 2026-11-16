@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import hashlib
-import math
-import random
 import threading
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from functools import lru_cache
+
+import numpy as np
+import pandas as pd
 
 from .config import Settings
 from .models import Candle, Tick
@@ -41,6 +43,11 @@ class DataSource(ABC):
 
     @abstractmethod
     def get_tick(self, symbol: str) -> Tick: ...
+
+    def get_frame(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
+        """Candle sebagai DataFrame (untuk analisis & backtest)."""
+        rows = [c.model_dump() for c in self.get_candles(symbol, timeframe, count)]
+        return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +177,36 @@ _MOCK_BASE = {
 }
 
 
-MOCK_HISTORY = 1000
+# Panjang histori M15 simulasi (~250 hari). H1/H4/D1 dibentuk dari agregasi M15,
+# sehingga semua timeframe konsisten satu sama lain (seperti data broker asli).
+MOCK_M15_HISTORY = 24_000
+
+
+@lru_cache(maxsize=32)
+def _mock_m15(symbol: str, last_open_ts: int) -> "pd.DataFrame":
+    price, vol, digits, spread = _MOCK_BASE[symbol]
+    seed = int(hashlib.sha256(symbol.encode()).hexdigest()[:8], 16)
+    rng = np.random.default_rng(seed)
+    n = MOCK_M15_HISTORY
+    # drift berganti tiap ~200 candle supaya ada fase tren naik/turun
+    regimes = rng.uniform(-0.12, 0.12, size=n // 200 + 1) * vol
+    drift = np.repeat(regimes, 200)[:n]
+    rets = drift + rng.normal(0, vol, size=n)
+    close = np.exp(np.cumsum(rets))
+    close *= price / close[-1]  # harga terakhir = harga acuan, agar angkanya realistis
+    open_ = np.concatenate([[close[0] * np.exp(-rets[0])], close[:-1]])
+    wick_hi = np.abs(rng.normal(0, vol / 2, size=n))
+    wick_lo = np.abs(rng.normal(0, vol / 2, size=n))
+    high = np.maximum(open_, close) * (1 + wick_hi)
+    low = np.minimum(open_, close) * (1 - wick_lo)
+    times = pd.to_datetime(last_open_ts - 900 * np.arange(n - 1, -1, -1), unit="s", utc=True)
+    return pd.DataFrame({
+        "time": times,
+        "open": open_.round(digits), "high": high.round(digits),
+        "low": low.round(digits), "close": close.round(digits),
+        "tick_volume": rng.integers(100, 5000, size=n),
+        "spread": int(round(spread * 10 ** digits)),
+    })
 
 
 class MockSource(DataSource):
@@ -204,41 +240,29 @@ class MockSource(DataSource):
             raise DataSourceError(f"Simbol tidak dikenal: {symbol}")
         return _MOCK_BASE[symbol]
 
+    def frame(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        self._base(symbol)
+        minutes = TIMEFRAME_MINUTES.get(timeframe)
+        if minutes is None or minutes < 15:
+            raise DataSourceError(f"Timeframe {timeframe} tidak didukung di mode simulasi")
+        ts = int(self._current_time().timestamp())
+        m15 = _mock_m15(symbol, ts - ts % 900)
+        if minutes == 15:
+            return m15
+        key = m15["time"].dt.floor(f"{minutes}min")
+        g = m15.groupby(key, sort=True)
+        out = pd.DataFrame({
+            "open": g["open"].first(), "high": g["high"].max(), "low": g["low"].min(),
+            "close": g["close"].last(), "tick_volume": g["tick_volume"].sum(), "spread": g["spread"].first(),
+        }).reset_index(names="time")
+        return out.iloc[1:].reset_index(drop=True)  # candle pertama bisa tidak lengkap
+
+    def get_frame(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
+        return self.frame(symbol, timeframe).tail(count).reset_index(drop=True)
+
     def get_candles(self, symbol: str, timeframe: str, count: int) -> list[Candle]:
-        if timeframe not in TIMEFRAME_MINUTES:
-            raise DataSourceError(f"Timeframe tidak dikenal: {timeframe}")
-        price, vol, digits, spread = self._base(symbol)
-        minutes = TIMEFRAME_MINUTES[timeframe]
-        vol *= math.sqrt(minutes / 15)
-        seed = int(hashlib.sha256(f"{symbol}:{timeframe}".encode()).hexdigest()[:8], 16)
-        rng = random.Random(seed)
-
-        step = timedelta(minutes=minutes)
-        now = self._current_time()
-        epoch_min = int(now.timestamp() // 60)
-        last_open = datetime.fromtimestamp((epoch_min - epoch_min % minutes) * 60, tz=timezone.utc)
-        # Selalu buat histori dengan panjang tetap lalu ambil ujungnya,
-        # supaya candle terakhir sama berapa pun `count` yang diminta.
-        total = max(count, MOCK_HISTORY)
-        start = last_open - step * (total - 1)
-
-        candles: list[Candle] = []
-        drift = rng.uniform(-0.3, 0.3) * vol
-        for i in range(total):
-            if i % 50 == 0:  # ganti arah tren sesekali
-                drift = rng.uniform(-0.3, 0.3) * vol
-            o = price
-            c = o * (1 + drift + rng.gauss(0, vol))
-            h = max(o, c) * (1 + abs(rng.gauss(0, vol / 2)))
-            low = min(o, c) * (1 - abs(rng.gauss(0, vol / 2)))
-            candles.append(Candle(
-                time=start + step * i,
-                open=round(o, digits), high=round(h, digits), low=round(low, digits), close=round(c, digits),
-                tick_volume=rng.randint(100, 5000),
-                spread=int(round(spread * 10 ** digits)),
-            ))
-            price = c
-        return candles[-count:]
+        df = self.frame(symbol, timeframe).tail(count)
+        return [Candle(**r) for r in df.to_dict("records")]
 
     def get_tick(self, symbol: str) -> Tick:
         _, _, digits, spread = self._base(symbol)
