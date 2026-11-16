@@ -9,8 +9,8 @@ yang terhubung ke satu akun MetaTrader 5.
    dan candle H4/H1/M15 dari MT5.
 2. **Mesin analisis & Confidence Score** (selesai): EMA 50/200, S/R, Order Block, Fibonacci 0.618,
    RSI, MACD, SL/TP berbasis ATR (RR 1:1.5 sampai 1:2), filter berita high impact ±30 menit.
-3. **Web dashboard & One-Click Trade** (selesai di versi ini): tombol "Execute to MT5".
-4. **Auto-Trigger & pengaman**: eksekusi otomatis saat skor di atas 80%, batas lot dan posisi, log order.
+3. **Web dashboard & One-Click Trade** (selesai): tombol "Execute to MT5".
+4. **Auto-Trigger & pengaman** (selesai di versi ini): eksekusi otomatis saat skor di atas 80%, batas lot dan posisi, log order.
 
 ## Kebutuhan
 
@@ -118,6 +118,32 @@ pytest
 ```
 
 Tes memakai data simulasi dan modul MT5 palsu, jadi bisa dijalankan di OS apa pun.
+
+## Auto-Trigger
+
+Saklar **Auto-Trigger** ada di pojok kanan atas dashboard. Setelah dinyalakan (dengan konfirmasi), sistem
+mengecek semua pair setiap `AUTO_INTERVAL_SECONDS` dan membuka posisi **tanpa konfirmasi** jika:
+
+- Sinyal BUY/SELL dengan Confidence Score **di atas** `AUTO_MIN_CONFIDENCE` (default 80).
+- Tidak ada berita high impact ±30 menit (WAIT & SEE).
+- Belum ada posisi di pair itu, dan total posisi dari dashboard kurang dari `AUTO_MAX_OPEN_POSITIONS`.
+- Sudah lewat `AUTO_COOLDOWN_MINUTES` sejak auto-trade terakhir di pair itu.
+- Jumlah auto-trade hari ini kurang dari `AUTO_MAX_TRADES_PER_DAY`.
+- Spread tidak lebih dari `AUTO_MAX_SPREAD_RATIO` x jarak SL.
+
+Pengaman tambahan:
+
+- **Selalu OFF saat aplikasi baru dijalankan.** Harus dinyalakan manual setiap kali.
+- **Kill switch**: jika equity turun `AUTO_MAX_DAILY_LOSS_PERCENT` dari equity awal hari, Auto-Trigger mati sendiri.
+- **Akun real ditolak** kecuali `ALLOW_AUTO_ON_REAL_ACCOUNT=true`. Uji minimal beberapa minggu di akun demo dulu.
+- Auto-trade memakai lot `AUTO_LOT` (tetap dibatasi `MAX_LOT`) dan target TP2 (1:2).
+- Panel Auto-Trigger menampilkan alasan keputusan per pair, dan setiap order bertanda `[AUTO]` di log.
+- Auto-Trigger berjalan di dalam backend, jadi PC/VPS dan MT5 harus tetap menyala. Untuk 24 jam, pakai VPS Windows.
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /api/auto` | Status, aturan, keputusan terakhir per pair, aktivitas |
+| `POST /api/auto` | Nyalakan/matikan: `{"enabled": true}` |
 
 ## Lisensi pihak ketiga
 

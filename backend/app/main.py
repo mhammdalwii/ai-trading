@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timedelta, timezone
 
 from .analysis import analyze
+from .autotrade import AutoTrader
 from .backtest import run_backtest
 from .config import SYMBOLS, TIMEFRAMES, Settings, get_settings
 from .data_sources import TIMEFRAME_MINUTES, DataSource, DataSourceError, create_source
@@ -50,7 +51,13 @@ async def lifespan(app: FastAPI):
         app.state.source = source
     if getattr(app.state, "news", None) is None:
         app.state.news = create_news_filter(get_settings())
+    if getattr(app.state, "auto", None) is None:
+        source, news, settings = app.state.source, app.state.news, get_settings()
+        app.state.auto = AutoTrader(source, settings, lambda sym: _analyze_symbol(sym, source, news))
+        app.state.auto.start()
     yield
+    app.state.auto.stop()
+    app.state.auto = None
     app.state.source.shutdown()
 
 
@@ -313,6 +320,31 @@ def close_position(ticket: int, source: DataSource = Depends(get_source),
 @app.get("/api/orders/log")
 def order_log(limit: int = Query(50, ge=1, le=500), settings: Settings = Depends(get_app_settings)):
     return read_order_log(settings, limit)
+
+
+# ---------------------------------------------------------------------------
+# Langkah 4: Auto-Trigger
+# ---------------------------------------------------------------------------
+def get_auto(request: Request) -> AutoTrader:
+    return request.app.state.auto
+
+
+class AutoToggle(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/auto")
+def auto_status(auto: AutoTrader = Depends(get_auto)):
+    return auto.status()
+
+
+@app.post("/api/auto", dependencies=[Depends(require_token)])
+def auto_toggle(body: AutoToggle, auto: AutoTrader = Depends(get_auto)):
+    try:
+        auto.set_enabled(body.enabled)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return auto.status()
 
 
 # Dashboard web (file statis di folder frontend/)

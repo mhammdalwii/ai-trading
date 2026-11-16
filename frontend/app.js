@@ -205,11 +205,59 @@ async function loadOrderLog() {
     const rows = await api("/api/orders/log?limit=30");
     $("orderLog").innerHTML = rows.length ? rows.map((r) => {
       const t = new Date(r.logged_at).toLocaleTimeString("id-ID");
-      const what = r.action === "close" ? `Tutup #${r.ticket}` : `${r.side || ""} ${r.symbol || ""} ${r.volume ?? ""}`;
+      const what = r.action === "close" ? `Tutup #${r.ticket}` : r.status === "auto_disabled" ? "Auto-Trigger dimatikan"
+        : `${r.trigger === "auto" ? "[AUTO] " : ""}${r.side || ""} ${r.symbol || ""} ${r.volume ?? ""}`;
       return `<li><span class="muted">${t}</span> ${esc(what)} <span class="${r.status === "rejected" ? "neg" : "pos"}">${esc(r.status)}</span>${r.reason ? `<div class="muted">${esc(r.reason)}</div>` : ""}</li>`;
     }).join("") : `<li class="muted">Belum ada order</li>`;
   } catch (e) { /* abaikan */ }
 }
+
+// ---------------------------------------------------------------- auto-trigger
+let autoState = null;
+function renderAuto(a) {
+  autoState = a;
+  $("autoToggle").checked = a.enabled;
+  $("autoToggle").closest(".switch").classList.toggle("on", a.enabled);
+  $("autoLabel").textContent = `Auto-Trigger ${a.enabled ? "ON" : "OFF"}`;
+  const r = a.rules;
+  $("autoStatus").innerHTML = `${a.enabled ? '<span class="pos">Aktif</span>' : '<span class="muted">Mati</span>'}
+    · skor &gt; ${r.min_confidence}% · ${r.lot} lot · trade hari ini ${a.trades_today}/${r.max_trades_per_day}
+    ${a.disabled_reason ? `<div class="neg">Dimatikan otomatis: ${esc(a.disabled_reason)}</div>` : ""}
+    ${a.last_run ? `<div class="muted">Cek terakhir ${new Date(a.last_run).toLocaleTimeString("id-ID")}</div>` : ""}`;
+  $("autoDecisions").innerHTML = Object.entries(a.decisions || {}).map(([sym, d]) =>
+    `<tr><td>${esc(sym)}</td><td class="muted">${esc(d)}</td></tr>`).join("");
+  $("autoActivity").innerHTML = (a.activity || []).slice(0, 8).map((x) =>
+    `<li><span class="muted">${new Date(x.time).toLocaleTimeString("id-ID")}</span> ${x.symbol ? esc(x.symbol) + " " : ""}<span class="${x.kind === "TRADE" ? "pos" : x.kind === "KILL" || x.kind === "ERROR" ? "neg" : ""}">${esc(x.message)}</span></li>`).join("");
+}
+async function loadAuto() { try { renderAuto(await api("/api/auto")); } catch (e) { /* abaikan */ } }
+
+async function setAuto(on) {
+  try {
+    if (state.config?.token_required && !state.token) {
+      state.token = prompt("Masukkan token dashboard") || "";
+      localStorage.setItem("dashboardToken", state.token);
+    }
+    renderAuto(await api("/api/auto", { method: "POST", body: JSON.stringify({ enabled: on }) }));
+  } catch (e) { alert(`Gagal mengubah Auto-Trigger: ${e.message}`); loadAuto(); }
+}
+
+$("autoToggle").addEventListener("change", (e) => {
+  if (!e.target.checked) { setAuto(false); return; }
+  e.target.checked = false; // tunggu konfirmasi
+  const r = autoState?.rules || {};
+  $("autoThreshold").textContent = r.min_confidence ?? 80;
+  $("autoRules").innerHTML = [
+    `Lot per order: ${r.lot}`,
+    `Maksimal ${r.max_open_positions} posisi terbuka, 1 posisi per pair`,
+    `Jeda ${r.cooldown_minutes} menit per pair setelah auto-trade`,
+    `Maksimal ${r.max_trades_per_day} auto-trade per hari`,
+    `Mati otomatis jika equity turun ${r.max_daily_loss_percent}% dalam sehari`,
+    `Pair: ${(r.symbols || []).join(", ")}`,
+  ].map((x) => `<li>${esc(x)}</li>`).join("");
+  $("autoConfirm").returnValue = "";
+  $("autoConfirm").showModal();
+});
+$("autoConfirm").addEventListener("close", () => { if ($("autoConfirm").returnValue === "ok") setAuto(true); });
 
 // ---------------------------------------------------------------- status & loops
 async function loadHealth() {
@@ -257,7 +305,8 @@ async function boot() {
   const saved = localStorage.getItem("selectedSymbol");
   await Promise.all([loadHealth(), loadTicks()]);
   await selectSymbol(state.symbols.includes(saved) ? saved : state.symbols[0]);
-  loadSummary(); loadPositions(); loadNews(); loadOrderLog();
+  loadSummary(); loadPositions(); loadNews(); loadOrderLog(); loadAuto();
+  setInterval(() => { loadAuto(); loadOrderLog(); }, 10000);
   setInterval(loadTicks, 3000);
   setInterval(loadPositions, 5000);
   setInterval(loadHealth, 15000);

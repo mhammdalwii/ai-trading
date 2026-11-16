@@ -14,6 +14,10 @@
       <span id="conn" class="pill">Menghubungkan…</span>
       <span id="account" class="muted"></span>
       <span id="newsStatus" class="pill"></span>
+      <label class="switch" title="Eksekusi otomatis jika Confidence Score di atas 80%">
+        <input type="checkbox" id="autoToggle"><span class="slider"></span>
+        <span id="autoLabel">Auto-Trigger OFF</span>
+      </label>
       <span id="clock" class="muted mono"></span>
     </div>
   </header>
@@ -80,6 +84,12 @@
       </table>
     </div>
     <div class="card">
+      <h2>Auto-Trigger</h2>
+      <div id="autoStatus" class="small"></div>
+      <table class="grid small"><tbody id="autoDecisions"></tbody></table>
+      <ul id="autoActivity" class="list small"></ul>
+    </div>
+    <div class="card">
       <h2>Berita high impact (24 jam)</h2>
       <ul id="news" class="list"></ul>
     </div>
@@ -88,6 +98,19 @@
       <ul id="orderLog" class="list mono small"></ul>
     </div>
   </section>
+
+  <dialog id="autoConfirm">
+    <form method="dialog">
+      <h2>Nyalakan Auto-Trigger?</h2>
+      <p>Sistem akan membuka posisi <strong>tanpa konfirmasi</strong> setiap kali Confidence Score di atas
+        <span id="autoThreshold">80</span>% dan tidak ada berita high impact.</p>
+      <ul id="autoRules" class="small muted"></ul>
+      <div class="row end">
+        <button value="cancel">Batal</button>
+        <button value="ok" class="exec">Nyalakan</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="confirm">
     <form method="dialog">

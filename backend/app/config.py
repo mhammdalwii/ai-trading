@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     dashboard_token: str = ""
     order_log_path: str = "data/orders.jsonl"
 
+    # Auto-Trigger (langkah 4). Saklar selalu OFF saat aplikasi baru dijalankan.
+    auto_min_confidence: float = 80.0  # eksekusi hanya jika skor DI ATAS nilai ini
+    auto_lot: float = 0.01
+    auto_interval_seconds: int = 60
+    auto_max_open_positions: int = 3
+    auto_cooldown_minutes: int = 60  # jeda per pair setelah auto-trade
+    auto_max_trades_per_day: int = 5
+    auto_max_daily_loss_percent: float = 3.0  # kill switch: auto mati jika equity turun segini dari awal hari
+    auto_max_spread_ratio: float = 0.25  # lewati jika spread > 25% jarak SL
+    auto_symbols: str = ",".join(SYMBOLS)
+    allow_auto_on_real_account: bool = False  # akun real ditolak kecuali diizinkan eksplisit
+
     symbol_suffix: str = ""
     symbol_map: dict[str, str] = Field(default_factory=dict)
 
