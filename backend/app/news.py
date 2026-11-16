@@ -160,6 +160,10 @@ class NewsFilter:
         self.error: str | None = None
 
     def _refresh(self) -> None:
+        if not self.providers:
+            self.source, self.error, self._events = "disabled", None, []
+            self._fetched_at = time.monotonic()
+            return
         errors = []
         for p in self.providers:
             try:

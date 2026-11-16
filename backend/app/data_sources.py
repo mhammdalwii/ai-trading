@@ -10,7 +10,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from .config import Settings
+from .config import SYMBOLS, Settings
 from .models import Candle, Tick
 
 TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
@@ -43,6 +43,21 @@ class DataSource(ABC):
 
     @abstractmethod
     def get_tick(self, symbol: str) -> Tick: ...
+
+    # --- Trading -------------------------------------------------------------
+    @abstractmethod
+    def symbol_spec(self, symbol: str) -> dict:
+        """volume_min, volume_max, volume_step, stops_level (dalam harga), digits."""
+
+    @abstractmethod
+    def send_market_order(self, symbol: str, side: str, volume: float, sl: float, tp: float,
+                          comment: str) -> dict: ...
+
+    @abstractmethod
+    def positions(self) -> list[dict]: ...
+
+    @abstractmethod
+    def close_position(self, ticket: int) -> dict: ...
 
     def get_frame(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
         """Candle sebagai DataFrame (untuk analisis & backtest)."""
@@ -161,6 +176,121 @@ class MT5Source(DataSource):
             spread_points=round((t.ask - t.bid) / info.point, 1),
         )
 
+    # --- Trading -------------------------------------------------------------
+    def symbol_spec(self, symbol: str) -> dict:
+        bsym = self.settings.broker_symbol(symbol)
+        with self._lock:
+            self._ensure_symbol(bsym)
+            info = self._mt5.symbol_info(bsym)
+        if info is None:
+            raise DataSourceError(f"Info simbol {bsym} tidak tersedia")
+        return {
+            "volume_min": float(info.volume_min),
+            "volume_max": float(info.volume_max),
+            "volume_step": float(info.volume_step),
+            "stops_level": float(info.trade_stops_level) * float(info.point),
+            "digits": int(info.digits),
+        }
+
+    def _filling(self, info) -> int:
+        mode = int(getattr(info, "filling_mode", 0))
+        if mode & 1:
+            return self._mt5.ORDER_FILLING_FOK
+        if mode & 2:
+            return self._mt5.ORDER_FILLING_IOC
+        return self._mt5.ORDER_FILLING_RETURN
+
+    def _send(self, request: dict) -> dict:
+        result = self._mt5.order_send(request)
+        if result is None:
+            code, msg = self._mt5.last_error()
+            raise DataSourceError(f"order_send gagal ({code}): {msg}")
+        if result.retcode not in (self._mt5.TRADE_RETCODE_DONE, self._mt5.TRADE_RETCODE_PLACED):
+            raise DataSourceError(f"Order ditolak broker (retcode {result.retcode}): {result.comment}")
+        return {"order": int(result.order), "deal": int(result.deal), "volume": float(result.volume),
+                "price": float(result.price), "retcode": int(result.retcode), "comment": result.comment}
+
+    def _check_trade_allowed(self) -> None:
+        term = self._mt5.terminal_info()
+        if term is not None and not term.trade_allowed:
+            raise DataSourceError(
+                "Algo Trading di terminal MT5 belum aktif. Klik tombol 'Algo Trading' di toolbar MT5."
+            )
+
+    def send_market_order(self, symbol: str, side: str, volume: float, sl: float, tp: float,
+                          comment: str) -> dict:
+        bsym = self.settings.broker_symbol(symbol)
+        with self._lock:
+            self._check_trade_allowed()
+            self._ensure_symbol(bsym)
+            info = self._mt5.symbol_info(bsym)
+            tick = self._mt5.symbol_info_tick(bsym)
+            if info is None or tick is None:
+                raise DataSourceError(f"Tidak ada harga untuk {bsym}")
+            buy = side == "BUY"
+            request = {
+                "action": self._mt5.TRADE_ACTION_DEAL,
+                "symbol": bsym,
+                "volume": float(volume),
+                "type": self._mt5.ORDER_TYPE_BUY if buy else self._mt5.ORDER_TYPE_SELL,
+                "price": float(tick.ask if buy else tick.bid),
+                "sl": float(sl),
+                "tp": float(tp),
+                "deviation": int(self.settings.trade_deviation_points),
+                "magic": int(self.settings.magic_number),
+                "comment": comment[:31],
+                "type_time": self._mt5.ORDER_TIME_GTC,
+                "type_filling": self._filling(info),
+            }
+            return self._send(request)
+
+    def positions(self) -> list[dict]:
+        with self._lock:
+            rows = self._mt5.positions_get() or ()
+        reverse = {self.settings.broker_symbol(s): s for s in SYMBOLS}
+        out = []
+        for p in rows:
+            out.append({
+                "ticket": int(p.ticket),
+                "symbol": reverse.get(p.symbol, p.symbol),
+                "broker_symbol": p.symbol,
+                "side": "BUY" if p.type == 0 else "SELL",
+                "volume": float(p.volume),
+                "price_open": float(p.price_open),
+                "price_current": float(p.price_current),
+                "sl": float(p.sl),
+                "tp": float(p.tp),
+                "profit": float(p.profit),
+                "time": datetime.fromtimestamp(int(p.time), tz=timezone.utc).isoformat(),
+                "from_dashboard": int(p.magic) == int(self.settings.magic_number),
+            })
+        return out
+
+    def close_position(self, ticket: int) -> dict:
+        with self._lock:
+            self._check_trade_allowed()
+            found = self._mt5.positions_get(ticket=int(ticket))
+            if not found:
+                raise DataSourceError(f"Posisi {ticket} tidak ditemukan")
+            p = found[0]
+            info = self._mt5.symbol_info(p.symbol)
+            tick = self._mt5.symbol_info_tick(p.symbol)
+            buy = p.type == 0
+            request = {
+                "action": self._mt5.TRADE_ACTION_DEAL,
+                "symbol": p.symbol,
+                "volume": float(p.volume),
+                "type": self._mt5.ORDER_TYPE_SELL if buy else self._mt5.ORDER_TYPE_BUY,
+                "position": int(ticket),
+                "price": float(tick.bid if buy else tick.ask),
+                "deviation": int(self.settings.trade_deviation_points),
+                "magic": int(self.settings.magic_number),
+                "comment": "close from dashboard",
+                "type_time": self._mt5.ORDER_TIME_GTC,
+                "type_filling": self._filling(info),
+            }
+            return self._send(request)
+
 
 # ---------------------------------------------------------------------------
 # Mock (simulasi)
@@ -218,6 +348,8 @@ class MockSource(DataSource):
         super().__init__(settings)
         self._connected = False
         self._now = now
+        self._positions: dict[int, dict] = {}
+        self._ticket = 1000
 
     def _current_time(self) -> datetime:
         return self._now or datetime.now(timezone.utc)
@@ -276,6 +408,48 @@ class MockSource(DataSource):
             ask=round(bid + spread, digits),
             spread_points=round(spread * 10 ** digits, 1),
         )
+
+    # --- Trading (simulasi) ---------------------------------------------------
+    _CONTRACT = {"XAUUSD": 100, "BTCUSD": 1, "ETHUSD": 1, "EURUSD": 100_000, "GBPUSD": 100_000,
+                 "USDJPY": 100_000, "AUDUSD": 100_000}
+
+    def symbol_spec(self, symbol: str) -> dict:
+        _, _, digits, spread = self._base(symbol)
+        return {"volume_min": 0.01, "volume_max": 100.0, "volume_step": 0.01,
+                "stops_level": spread, "digits": digits}
+
+    def send_market_order(self, symbol: str, side: str, volume: float, sl: float, tp: float,
+                          comment: str) -> dict:
+        tk = self.get_tick(symbol)
+        price = tk.ask if side == "BUY" else tk.bid
+        self._ticket += 1
+        self._positions[self._ticket] = {
+            "ticket": self._ticket, "symbol": symbol, "broker_symbol": tk.broker_symbol, "side": side,
+            "volume": volume, "price_open": price, "sl": sl, "tp": tp,
+            "time": self._current_time().isoformat(), "comment": comment,
+        }
+        return {"order": self._ticket, "deal": self._ticket, "volume": volume, "price": price,
+                "retcode": 10009, "comment": "Simulasi"}
+
+    def _with_profit(self, p: dict) -> dict:
+        tk = self.get_tick(p["symbol"])
+        current = tk.bid if p["side"] == "BUY" else tk.ask
+        diff = (current - p["price_open"]) * (1 if p["side"] == "BUY" else -1)
+        profit = diff * p["volume"] * self._CONTRACT[p["symbol"]]
+        if p["symbol"] == "USDJPY":
+            profit /= current
+        return {**p, "price_current": current, "profit": round(profit, 2), "from_dashboard": True}
+
+    def positions(self) -> list[dict]:
+        return [self._with_profit(p) for p in self._positions.values()]
+
+    def close_position(self, ticket: int) -> dict:
+        p = self._positions.pop(int(ticket), None)
+        if p is None:
+            raise DataSourceError(f"Posisi {ticket} tidak ditemukan")
+        closed = self._with_profit(p)
+        return {"order": int(ticket), "deal": int(ticket), "volume": p["volume"],
+                "price": closed["price_current"], "retcode": 10009, "comment": "Simulasi", "profit": closed["profit"]}
 
 
 def create_source(settings: Settings) -> DataSource:

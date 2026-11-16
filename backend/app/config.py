@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     news_sources: str = "myfxbook,forexfactory"
     news_window_minutes: int = 30
 
+    # Eksekusi order
+    default_lot: float = 0.01
+    max_lot: float = 1.0  # batas keras: order di atas ini selalu ditolak
+    trade_deviation_points: int = 20  # toleransi slippage
+    magic_number: int = 20261116  # penanda order dari dashboard ini di MT5
+    # Jika diisi, semua aksi trading wajib menyertakan token ini (disarankan saat dipasang di VPS)
+    dashboard_token: str = ""
+    order_log_path: str = "data/orders.jsonl"
+
     symbol_suffix: str = ""
     symbol_map: dict[str, str] = Field(default_factory=dict)
 

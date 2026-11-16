@@ -7,9 +7,9 @@ yang terhubung ke satu akun MetaTrader 5.
 
 1. **Fondasi & koneksi MT5** (selesai): backend FastAPI yang menarik harga real-time
    dan candle H4/H1/M15 dari MT5.
-2. **Mesin analisis & Confidence Score** (selesai di versi ini): EMA 50/200, S/R, Order Block, Fibonacci 0.618,
+2. **Mesin analisis & Confidence Score** (selesai): EMA 50/200, S/R, Order Block, Fibonacci 0.618,
    RSI, MACD, SL/TP berbasis ATR (RR 1:1.5 sampai 1:2), filter berita high impact ±30 menit.
-3. **Web dashboard & One-Click Trade**: tombol "Execute to MT5".
+3. **Web dashboard & One-Click Trade** (selesai di versi ini): tombol "Execute to MT5".
 4. **Auto-Trigger & pengaman**: eksekusi otomatis saat skor di atas 80%, batas lot dan posisi, log order.
 
 ## Kebutuhan
@@ -34,7 +34,26 @@ notepad .env     # isi DATA_SOURCE=mt5, MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 uvicorn app.main:app --reload
 ```
 
-Lalu buka http://127.0.0.1:8000/docs untuk mencoba semua endpoint.
+Lalu buka **http://127.0.0.1:8000** untuk dashboard, atau http://127.0.0.1:8000/docs untuk mencoba semua endpoint.
+
+## Dashboard
+
+- Kiri: 7 pair dengan harga, sinyal, dan Confidence Score (diperbarui tiap 30 detik, harga tiap 3 detik).
+- Tengah: grafik M15/H1/H4 dengan EMA 50/200 serta garis Entry, SL, TP1, TP2.
+- Panel sinyal: Entry, SL, TP, peringatan berita, dan alasan tiap skor.
+- **Execute to MT5**: pilih lot dan target (TP1 atau TP2), konfirmasi, lalu order market dikirim ke MT5.
+- Bawah: posisi terbuka (bisa ditutup), jadwal berita high impact, dan log order.
+
+### Pengaman eksekusi
+
+- Saat tombol ditekan, server **menghitung ulang analisis**. Jika sinyal sudah berubah, order dibatalkan.
+- Order hanya dikirim jika sinyal BUY/SELL (bukan WAIT & SEE / NO TRADE).
+- Lot dibulatkan ke step broker dan ditolak jika di atas `MAX_LOT`.
+- SL/TP dicek sisi dan jaraknya terhadap stop level broker.
+- Semua order (berhasil maupun ditolak) dicatat di `backend/data/orders.jsonl`.
+- Di MT5, tombol **Algo Trading** di toolbar harus aktif, kalau tidak order akan ditolak dengan pesan yang jelas.
+- Order dari dashboard memakai magic number `MAGIC_NUMBER` sehingga mudah dibedakan di MT5.
+- Server hanya mendengarkan di `127.0.0.1` secara default. Jika dibuka dari perangkat lain, isi `DASHBOARD_TOKEN`.
 
 ### Nama simbol broker
 
@@ -62,6 +81,10 @@ SYMBOL_MAP={"XAUUSD": "GOLD"}
 | `GET /api/analysis/{symbol}` | Sinyal lengkap: Entry, SL, TP1, TP2, Confidence Score, dan alasan tiap skor |
 | `GET /api/news?hours=24` | Jadwal berita high impact dan pair yang sedang diblokir |
 | `GET /api/backtest/{symbol}?days=30` | Uji strategi di data historis (maks 60 hari) |
+| `POST /api/execute/{symbol}` | One-Click Trade: `{"expected_signal": "BUY", "volume": 0.01, "take_profit": "tp2"}` |
+| `GET /api/positions` | Posisi terbuka di akun |
+| `POST /api/positions/{ticket}/close` | Tutup posisi |
+| `GET /api/orders/log` | Riwayat order dari dashboard |
 
 ## Cara kerja analisis
 
@@ -95,6 +118,11 @@ pytest
 ```
 
 Tes memakai data simulasi dan modul MT5 palsu, jadi bisa dijalankan di OS apa pun.
+
+## Lisensi pihak ketiga
+
+Grafik memakai [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0),
+disertakan di `frontend/vendor/` agar dashboard tetap jalan tanpa internet.
 
 ## Keamanan
 

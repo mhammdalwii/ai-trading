@@ -71,3 +71,50 @@ def test_connect_failure(fake_mt5):
     fake_mt5.last_error = lambda: (-6, "Authorization failed")
     with pytest.raises(DataSourceError, match="Authorization failed"):
         make().connect()
+
+
+def _trading_mt5(fake_mt5):
+    m = fake_mt5
+    m.TRADE_ACTION_DEAL, m.ORDER_TYPE_BUY, m.ORDER_TYPE_SELL = 1, 0, 1
+    m.ORDER_TIME_GTC, m.ORDER_FILLING_FOK, m.ORDER_FILLING_IOC, m.ORDER_FILLING_RETURN = 0, 0, 1, 2
+    m.TRADE_RETCODE_DONE, m.TRADE_RETCODE_PLACED = 10009, 10008
+    Info = namedtuple("Info", "point volume_min volume_max volume_step trade_stops_level digits filling_mode")
+    m.symbol_info = lambda s: Info(0.00001, 0.01, 100, 0.01, 10, 5, 2)
+    Term = namedtuple("Term", "trade_allowed")
+    m.terminal_info = lambda: Term(True)
+    R = namedtuple("R", "retcode order deal volume price comment")
+    m.sent = []
+    m.order_send = lambda req: (m.sent.append(req), R(10009, 55, 66, req["volume"], req["price"], "Request executed"))[1]
+    return m
+
+
+def test_send_market_order_request(fake_mt5):
+    m = _trading_mt5(fake_mt5)
+    src = make()
+    src.connect()
+    assert src.symbol_spec("EURUSD")["stops_level"] == pytest.approx(0.0001)
+    res = src.send_market_order("EURUSD", "BUY", 0.1, 1.05, 1.06, "AI BUY 72%")
+    req = m.sent[0]
+    assert req["symbol"] == "EURUSD.m" and req["type"] == m.ORDER_TYPE_BUY and req["price"] == 1.05508
+    assert req["type_filling"] == m.ORDER_FILLING_IOC and req["magic"] == 20261116
+    assert res["order"] == 55
+
+
+def test_order_rejected_by_broker(fake_mt5):
+    m = _trading_mt5(fake_mt5)
+    R = namedtuple("R", "retcode order deal volume price comment")
+    m.order_send = lambda req: R(10019, 0, 0, 0, 0, "No money")
+    src = make()
+    src.connect()
+    with pytest.raises(DataSourceError, match="No money"):
+        src.send_market_order("EURUSD", "SELL", 0.1, 1.06, 1.05, "x")
+
+
+def test_algo_trading_disabled(fake_mt5):
+    m = _trading_mt5(fake_mt5)
+    Term = namedtuple("Term", "trade_allowed")
+    m.terminal_info = lambda: Term(False)
+    src = make()
+    src._connected = True
+    with pytest.raises(DataSourceError, match="Algo Trading"):
+        src.send_market_order("EURUSD", "BUY", 0.1, 1.05, 1.06, "x")

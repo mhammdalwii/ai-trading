@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Trading Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">AI Trading Dashboard</div>
+    <div class="status">
+      <span id="conn" class="pill">Menghubungkan…</span>
+      <span id="account" class="muted"></span>
+      <span id="newsStatus" class="pill"></span>
+      <span id="clock" class="muted mono"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="pairs" id="pairs" aria-label="Daftar pair"></aside>
+
+    <section class="detail">
+      <div class="detail-head">
+        <div>
+          <h1 id="symTitle">-</h1>
+          <div id="symPrice" class="mono price"></div>
+        </div>
+        <div class="tf-tabs" role="tablist">
+          <button data-tf="M15" class="tf active">M15</button>
+          <button data-tf="H1" class="tf">H1</button>
+          <button data-tf="H4" class="tf">H4</button>
+        </div>
+      </div>
+      <div id="chart" class="chart"><div id="chartFallback" class="muted center hidden">Grafik tidak bisa dimuat.</div></div>
+
+      <div class="panels">
+        <div class="card signal-card">
+          <div class="row between">
+            <span id="sigBadge" class="badge">-</span>
+            <span class="muted" id="sigTime"></span>
+          </div>
+          <div class="confidence">
+            <div class="row between"><span>Confidence Score</span><strong id="confVal">-</strong></div>
+            <div class="bar"><div id="confBar"></div><div class="bar-mark" title="Ambang auto-trade 80%"></div></div>
+          </div>
+          <dl class="levels mono">
+            <dt>Entry</dt><dd id="lvEntry">-</dd>
+            <dt>Stop Loss</dt><dd id="lvSL" class="neg">-</dd>
+            <dt>TP1 (1:1.5)</dt><dd id="lvTP1" class="pos">-</dd>
+            <dt>TP2 (1:2)</dt><dd id="lvTP2" class="pos">-</dd>
+          </dl>
+          <ul id="warnings" class="warnings"></ul>
+
+          <div class="execute">
+            <label>Lot <input id="lot" type="number" min="0.01" step="0.01" value="0.01"></label>
+            <label>Target
+              <select id="tpChoice"><option value="tp2">TP2 (1:2)</option><option value="tp1">TP1 (1:1.5)</option></select>
+            </label>
+            <button id="execBtn" class="exec" disabled>Execute to MT5</button>
+          </div>
+          <div id="execMsg" class="exec-msg" role="status"></div>
+        </div>
+
+        <div class="card">
+          <h2>Alasan skor</h2>
+          <table class="factors"><tbody id="factors"></tbody></table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <section class="bottom">
+    <div class="card">
+      <h2>Posisi terbuka</h2>
+      <table class="grid">
+        <thead><tr><th>Pair</th><th>Arah</th><th>Lot</th><th>Open</th><th>SL</th><th>TP</th><th>Profit</th><th></th></tr></thead>
+        <tbody id="positions"><tr><td colspan="8" class="muted">Belum ada posisi</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Berita high impact (24 jam)</h2>
+      <ul id="news" class="list"></ul>
+    </div>
+    <div class="card">
+      <h2>Log order</h2>
+      <ul id="orderLog" class="list mono small"></ul>
+    </div>
+  </section>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2>Konfirmasi order</h2>
+      <p id="confirmText"></p>
+      <div class="row end">
+        <button value="cancel">Batal</button>
+        <button value="ok" class="exec">Kirim ke MT5</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

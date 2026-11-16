@@ -4,8 +4,14 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from pathlib import Path
+from typing import Literal
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +21,7 @@ from .config import SYMBOLS, TIMEFRAMES, Settings, get_settings
 from .data_sources import TIMEFRAME_MINUTES, DataSource, DataSourceError, create_source
 from .models import CandleSet, HealthStatus, MultiTimeframe, Tick
 from .news import ForexFactoryProvider, MyfxbookProvider, NewsFilter, NewsProvider
+from .trading import TradeRejected, execute_signal, log_order, read_order_log
 
 log = logging.getLogger("trading")
 
@@ -228,3 +235,91 @@ def backtest(symbol: str, days: int = Query(30, ge=1, le=60), source: DataSource
     except DataSourceError as exc:
         raise HTTPException(502, str(exc)) from exc
     return run_backtest(symbol, h4, h1, m15, days=days)
+
+
+# ---------------------------------------------------------------------------
+# Langkah 3: eksekusi order & dashboard
+# ---------------------------------------------------------------------------
+def get_app_settings(request: Request) -> Settings:
+    return getattr(request.app.state, "settings", None) or get_settings()
+
+
+def require_token(
+    settings: Settings = Depends(get_app_settings),
+    x_dashboard_token: str | None = Header(default=None),
+) -> None:
+    if settings.dashboard_token and x_dashboard_token != settings.dashboard_token:
+        raise HTTPException(401, "Token dashboard salah atau belum diisi")
+
+
+class ExecuteRequest(BaseModel):
+    volume: float | None = Field(default=None, gt=0, description="Lot; kosong = DEFAULT_LOT")
+    take_profit: Literal["tp1", "tp2"] = "tp2"
+    # Sinyal yang dilihat di layar. Jika sinyal terbaru berbeda, order dibatalkan.
+    expected_signal: Literal["BUY", "SELL"]
+
+
+@app.get("/api/config")
+def ui_config(settings: Settings = Depends(get_app_settings), source: DataSource = Depends(get_source)):
+    return {"default_lot": settings.default_lot, "max_lot": settings.max_lot, "data_source": source.name,
+            "token_required": bool(settings.dashboard_token), "symbols": list(SYMBOLS)}
+
+
+@app.post("/api/execute/{symbol}", dependencies=[Depends(require_token)])
+def execute(symbol: str, body: ExecuteRequest, source: DataSource = Depends(get_source),
+            news: NewsFilter = Depends(get_news), settings: Settings = Depends(get_app_settings)):
+    """One-Click Trade: hitung ulang analisis, lalu buka posisi di MT5 dengan SL/TP dari analisis."""
+    symbol = _check_symbol(symbol)
+    _require_connected(source)
+    try:
+        fresh = _analyze_symbol(symbol, source, news)
+    except (DataSourceError, ValueError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    if fresh["signal"] != body.expected_signal:
+        msg = f"Sinyal berubah menjadi {fresh['signal']} (sebelumnya {body.expected_signal}). Order dibatalkan."
+        log_order(settings, {"symbol": symbol, "side": body.expected_signal, "trigger": "manual",
+                             "status": "rejected", "reason": msg, "confidence": fresh["confidence"]})
+        raise HTTPException(409, msg)
+    try:
+        return execute_signal(source, settings, fresh, body.volume or settings.default_lot, body.take_profit)
+    except TradeRejected as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except DataSourceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/api/positions")
+def positions(source: DataSource = Depends(get_source)):
+    _require_connected(source)
+    try:
+        return source.positions()
+    except DataSourceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/positions/{ticket}/close", dependencies=[Depends(require_token)])
+def close_position(ticket: int, source: DataSource = Depends(get_source),
+                   settings: Settings = Depends(get_app_settings)):
+    _require_connected(source)
+    try:
+        result = source.close_position(ticket)
+    except DataSourceError as exc:
+        log_order(settings, {"ticket": ticket, "action": "close", "status": "rejected", "reason": str(exc)})
+        raise HTTPException(502, str(exc)) from exc
+    log_order(settings, {"ticket": ticket, "action": "close", "status": "closed", "result": result})
+    return result
+
+
+@app.get("/api/orders/log")
+def order_log(limit: int = Query(50, ge=1, le=500), settings: Settings = Depends(get_app_settings)):
+    return read_order_log(settings, limit)
+
+
+# Dashboard web (file statis di folder frontend/)
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(FRONTEND_DIR / "index.html")
