@@ -1,0 +1,49 @@
+# Jalankan:   docker compose up -d --build
+# Mode simulasi (tanpa MT5) cukup service "app". Untuk MT5 sungguhan di VPS Linux,
+# isi COMPOSE_PROFILES=mt5 di file .env agar service "mt5" (MetaTrader 5 di Wine) ikut jalan.
+# Panduan lengkap: docs/DEPLOY.md
+
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/mhammdalwii/ai-trading:latest}
+    build: .
+    container_name: ai-trading-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Log order disimpan di volume agar tidak hilang saat container diganti
+      ORDER_LOG_PATH: /app/backend/data/orders.jsonl
+    volumes:
+      - app_data:/app/backend/data
+    ports:
+      # Default hanya bisa dibuka dari VPS itu sendiri (akses lewat SSH tunnel).
+      # Ganti APP_BIND=0.0.0.0 hanya jika DASHBOARD_TOKEN sudah diisi dan firewall/HTTPS siap.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
+    networks: [internal]
+
+  mt5:
+    profiles: [mt5]
+    image: gmag11/metatrader5_vnc:2.3
+    container_name: ai-trading-mt5
+    restart: unless-stopped
+    environment:
+      # Login untuk layar MT5 di browser (KasmVNC), BUKAN login akun broker
+      CUSTOM_USER: ${VNC_USER:-trader}
+      PASSWORD: ${VNC_PASSWORD:-}  # WAJIB diisi di .env saat memakai profil mt5
+    volumes:
+      # Instalasi Wine + MT5 + login terminal tersimpan di sini (sekitar 4 GB)
+      - mt5_config:/config
+    ports:
+      # Layar MT5 via browser. Hanya localhost: buka lewat SSH tunnel, jangan dibuka ke internet.
+      - "127.0.0.1:${VNC_PORT:-3000}:3000"
+    # Port 8001 (RPyC) sengaja TIDAK dipublish: server ini bisa menjalankan kode apa pun,
+    # jadi hanya boleh diakses container app lewat jaringan internal.
+    networks: [internal]
+    shm_size: "1gb"
+
+networks:
+  internal: {}
+
+volumes:
+  app_data: {}
+  mt5_config: {}

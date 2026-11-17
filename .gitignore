@@ -7,3 +7,4 @@ venv/
 *.log
 backend/data/
 data/
+mt5-config/

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -12,6 +14,8 @@ import pandas as pd
 
 from .config import SYMBOLS, Settings
 from .models import Candle, Tick
+
+log = logging.getLogger("trading.source")
 
 TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
 
@@ -75,6 +79,23 @@ class MT5Source(DataSource):
 
     def __init__(self, settings: Settings):
         super().__init__(settings)
+        if settings.mt5_bridge_host:
+            from .mt5_bridge import RemoteMT5
+
+            mt5 = RemoteMT5(settings.mt5_bridge_host, settings.mt5_bridge_port,
+                            settings.mt5_bridge_timeout_seconds)
+            self.name = "mt5-bridge"
+        else:
+            mt5 = self._import_local()
+        self._mt5 = mt5
+        self._lock = threading.Lock()  # library MT5 tidak thread-safe
+        self._connected = False
+        self._last_attempt: float | None = None  # None = connect() belum pernah dipanggil
+
+    RECONNECT_SECONDS = 30.0
+
+    @staticmethod
+    def _import_local():
         try:
             import MetaTrader5 as mt5  # type: ignore
         except ImportError as exc:  # pragma: no cover - tergantung OS
@@ -82,9 +103,7 @@ class MT5Source(DataSource):
                 "Library MetaTrader5 tidak ditemukan. Library ini hanya berjalan di Windows. "
                 "Jalankan `pip install MetaTrader5` di Windows, atau pakai DATA_SOURCE=mock."
             ) from exc
-        self._mt5 = mt5
-        self._lock = threading.Lock()  # library MT5 tidak thread-safe
-        self._connected = False
+        return mt5
 
     def _tf(self, timeframe: str):
         mapping = {
@@ -101,6 +120,7 @@ class MT5Source(DataSource):
         return mapping[timeframe]
 
     def connect(self) -> None:
+        self._last_attempt = time.monotonic()
         s = self.settings
         kwargs: dict = {}
         if s.mt5_path:
@@ -108,19 +128,50 @@ class MT5Source(DataSource):
         if s.mt5_login:
             kwargs.update(login=int(s.mt5_login), password=s.mt5_password or "", server=s.mt5_server or "")
         with self._lock:
-            if not self._mt5.initialize(**kwargs):
+            try:
+                ok = self._mt5.initialize(**kwargs)
+            except (RuntimeError, EOFError, OSError) as exc:  # server bridge mati / tidak terjangkau
+                raise DataSourceError(str(exc)) from exc
+            if not ok:
                 code, msg = self._mt5.last_error()
                 raise DataSourceError(f"Gagal terhubung ke MT5 ({code}): {msg}")
             self._connected = True
 
     def shutdown(self) -> None:
         with self._lock:
-            self._mt5.shutdown()
+            try:
+                self._mt5.shutdown()
+            except (RuntimeError, EOFError, OSError) as exc:
+                log.warning("MT5 shutdown gagal: %s", exc)
             self._connected = False
+            self._last_attempt = None
 
     def is_connected(self) -> bool:
         with self._lock:
-            return self._connected and self._mt5.terminal_info() is not None
+            if self._connected:
+                try:
+                    if self._mt5.terminal_info() is not None:
+                        return True
+                except (RuntimeError, EOFError, OSError):
+                    pass
+                self._connected = False  # terminal tertutup / container mt5 restart
+        return self._try_reconnect()
+
+    def _try_reconnect(self) -> bool:
+        """Sambung ulang otomatis (maks sekali per RECONNECT_SECONDS) setelah connect() pernah dipanggil.
+
+        Penting di Docker: container mt5 butuh beberapa menit untuk siap, dan bisa restart sendiri.
+        """
+        now = time.monotonic()
+        if self._last_attempt is None or now - self._last_attempt < self.RECONNECT_SECONDS:
+            return False
+        try:
+            self.connect()
+        except DataSourceError as exc:
+            log.warning("Sambung ulang ke MT5 gagal: %s", exc)
+            return False
+        log.info("Tersambung kembali ke MT5")
+        return True
 
     def account_info(self) -> dict | None:
         with self._lock:

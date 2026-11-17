@@ -24,8 +24,8 @@ Tanpa MT5 pun Anda bisa mencoba API dengan `DATA_SOURCE=mock` (data simulasi).
 ## Instalasi (Windows, PowerShell)
 
 ```powershell
-git clone https://github.com/<akun-anda>/ai-trading-dashboard.git
-cd ai-trading-dashboard\backend
+git clone https://github.com/mhammdalwii/ai-trading.git
+cd ai-trading\backend
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -35,6 +35,19 @@ uvicorn app.main:app --reload
 ```
 
 Lalu buka **http://127.0.0.1:8000** untuk dashboard, atau http://127.0.0.1:8000/docs untuk mencoba semua endpoint.
+
+## Docker, VPS, dan CI/CD
+
+Aplikasi bisa dijalankan dengan Docker dan dideploy otomatis ke VPS Linux lewat GitHub Actions.
+Karena MT5 hanya ada di Windows, di VPS Linux terminal MT5 dijalankan di container Wine terpisah
+dan dashboard terhubung ke sana lewat `MT5_BRIDGE_HOST`.
+
+```bash
+cp .env.example .env          # DATA_SOURCE=mock untuk mencoba
+docker compose up -d --build  # buka http://localhost:8000
+```
+
+Panduan lengkap (pilihan VPS, GitHub Secrets, login MT5 di container): [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Dashboard
 
