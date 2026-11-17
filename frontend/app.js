@@ -89,7 +89,7 @@ $("pairs").addEventListener("click", (e) => {
 });
 
 async function selectSymbol(sym) {
-  state.selected = sym; state.analysis = null;
+  state.selected = sym; state.analysis = null; resetAI();
   localStorage.setItem("selectedSymbol", sym);
   renderPairs(); renderAnalysis();
   $("symTitle").textContent = sym;
@@ -163,6 +163,35 @@ $("confirm").addEventListener("close", async () => {
     if (/token/i.test(e.message)) { state.token = ""; localStorage.removeItem("dashboardToken"); }
     loadOrderLog(); loadAnalysis();
   } finally { renderAnalysis(); }
+});
+
+// ---------------------------------------------------------------- penjelasan AI (Claude)
+function resetAI() {
+  $("aiOut").className = "ai-out muted";
+  $("aiOut").textContent = 'Klik "Jelaskan" untuk penjelasan sinyal pair ini. AI hanya menjelaskan, tidak mengirim order.';
+  $("aiProvider").textContent = "";
+}
+$("aiBtn").addEventListener("click", async () => {
+  const sym = state.selected; if (!sym) return;
+  const out = $("aiOut");
+  out.className = "ai-out muted"; out.textContent = "Meminta penjelasan…";
+  $("aiBtn").disabled = true;
+  try {
+    if (state.config?.token_required && !state.token) {
+      state.token = prompt("Masukkan token dashboard") || "";
+      localStorage.setItem("dashboardToken", state.token);
+    }
+    const r = await api(`/api/ai/${sym}`, { method: "POST", body: JSON.stringify({ question: $("aiQuestion").value || null }) });
+    if (sym !== state.selected) return;
+    out.className = "ai-out";
+    out.innerHTML = `<strong>${esc(r.headline)}</strong><p>${esc(r.executive_summary)}</p>
+      <p class="warn-text">${esc(r.news_and_risk_note)}</p>
+      <ol>${(r.action_plan || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
+    $("aiProvider").textContent = r.provider === "claude" ? `Claude (${r.model})${r.cached ? ", cache" : ""}` : `Otomatis: ${r.model}`;
+  } catch (e) {
+    out.className = "ai-out neg"; out.textContent = `Gagal: ${e.message}`;
+    if (/token/i.test(e.message)) { state.token = ""; localStorage.removeItem("dashboardToken"); }
+  } finally { $("aiBtn").disabled = false; }
 });
 
 // ---------------------------------------------------------------- positions, news, log

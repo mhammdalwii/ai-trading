@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from datetime import datetime, timedelta, timezone
 
+from .ai_advisor import AIAdvisor
 from .analysis import analyze
 from .autotrade import AutoTrader
 from .backtest import run_backtest
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI):
         app.state.source = source
     if getattr(app.state, "news", None) is None:
         app.state.news = create_news_filter(get_settings())
+    if getattr(app.state, "ai", None) is None:
+        app.state.ai = AIAdvisor(get_settings())
     if getattr(app.state, "auto", None) is None:
         source, news, settings = app.state.source, app.state.news, get_settings()
         app.state.auto = AutoTrader(source, settings, lambda sym: _analyze_symbol(sym, source, news))
@@ -345,6 +348,38 @@ def auto_toggle(body: AutoToggle, auto: AutoTrader = Depends(get_auto)):
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return auto.status()
+
+
+# ---------------------------------------------------------------------------
+# Penjelasan AI (Claude): hanya menjelaskan, tidak pernah mengirim order
+# ---------------------------------------------------------------------------
+class AIRequest(BaseModel):
+    question: str | None = Field(default=None, max_length=500, description="Pertanyaan tambahan (opsional)")
+
+
+def get_ai(request: Request) -> AIAdvisor:
+    return request.app.state.ai
+
+
+@app.get("/api/ai/status")
+def ai_status(ai: AIAdvisor = Depends(get_ai)):
+    return {"enabled": ai.enabled, "model": ai.settings.ai_model if ai.enabled else None}
+
+
+@app.post("/api/ai/{symbol}", dependencies=[Depends(require_token)])
+def ai_brief(symbol: str, body: AIRequest | None = None, source: DataSource = Depends(get_source),
+             news: NewsFilter = Depends(get_news), ai: AIAdvisor = Depends(get_ai)):
+    """Penjelasan naratif sinyal satu pair dari Claude (atau fallback otomatis jika API key kosong)."""
+    symbol = _check_symbol(symbol)
+    _require_connected(source)
+    try:
+        analysis_data = _analyze_symbol(symbol, source, news)
+    except DataSourceError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"symbol": symbol, "signal": analysis_data["signal"], "confidence": analysis_data["confidence"],
+            **ai.brief(analysis_data, body.question if body else None)}
 
 
 # Dashboard web (file statis di folder frontend/)

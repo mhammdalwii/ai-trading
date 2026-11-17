@@ -71,6 +71,15 @@
           <h2>Alasan skor</h2>
           <table class="factors"><tbody id="factors"></tbody></table>
         </div>
+
+        <div class="card ai-card">
+          <div class="row between"><h2>Penjelasan AI</h2><span class="muted" id="aiProvider"></span></div>
+          <div class="ai-ask">
+            <input id="aiQuestion" type="text" maxlength="500" placeholder="Pertanyaan (opsional), misal: aman entry sekarang?">
+            <button id="aiBtn">Jelaskan</button>
+          </div>
+          <div id="aiOut" class="ai-out muted">Klik "Jelaskan" untuk penjelasan sinyal pair ini. AI hanya menjelaskan, tidak mengirim order.</div>
+        </div>
       </div>
     </section>
   </main>

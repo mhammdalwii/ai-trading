@@ -36,6 +36,21 @@ uvicorn app.main:app --reload
 
 Lalu buka **http://127.0.0.1:8000** untuk dashboard, atau http://127.0.0.1:8000/docs untuk mencoba semua endpoint.
 
+## Penjelasan AI (Claude)
+
+Panel **Penjelasan AI** di dashboard meminta Claude menjelaskan sinyal pair yang dipilih: kenapa skornya
+tinggi atau rendah, risiko berita, dan 3 langkah yang disarankan. Anda juga bisa mengetik pertanyaan.
+
+- Isi `ANTHROPIC_API_KEY` di `.env` (model default `claude-opus-5-5`, atur dengan `AI_MODEL` dan `AI_EFFORT`).
+- Tanpa API key, panel tetap jalan dengan penjelasan otomatis berbasis aturan.
+- AI **hanya menjelaskan**. Angka Entry/SL/TP tetap dari mesin analisis, dan AI tidak bisa mengirim order.
+- Klik ulang untuk pair dan pertanyaan yang sama dalam `AI_CACHE_SECONDS` tidak memanggil API lagi.
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/ai/{symbol}` | Penjelasan sinyal: `{"question": "aman entry sekarang?"}` (opsional) |
+| `GET /api/ai/status` | Apakah Claude aktif dan model yang dipakai |
+
 ## Docker, VPS, dan CI/CD
 
 Aplikasi bisa dijalankan dengan Docker dan dideploy otomatis ke VPS Linux lewat GitHub Actions.
