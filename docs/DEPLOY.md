@@ -1,5 +1,7 @@
 # Deploy ke VPS dengan Docker dan CI/CD
 
+> Sebelum mulai, selesaikan dulu uji lokal di [LOCAL-TEST.md](LOCAL-TEST.md).
+
 Panduan ini menjalankan dashboard 24 jam di VPS, dengan update otomatis setiap ada perubahan di branch `main`.
 
 ## Masalah utama: MT5 hanya ada di Windows
