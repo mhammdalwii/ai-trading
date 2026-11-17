@@ -30,6 +30,15 @@ jobs:
         env:
           DATA_SOURCE: mock
         run: pytest -q
+      - name: Uji cepat server (mode simulasi)
+        working-directory: backend
+        env:
+          DATA_SOURCE: mock
+          NEWS_SOURCES: ""
+        run: |
+          uvicorn app.main:app --port 8000 > /tmp/uvicorn.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/api/config > /dev/null && break; sleep 1; done
+          python ../scripts/smoke_test.py --ai || { cat /tmp/uvicorn.log; exit 1; }
 
   image:
     name: Build image Docker

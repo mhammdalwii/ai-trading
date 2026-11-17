@@ -62,7 +62,9 @@ cp .env.example .env          # DATA_SOURCE=mock untuk mencoba
 docker compose up -d --build  # buka http://localhost:8000
 ```
 
-Panduan lengkap (pilihan VPS, GitHub Secrets, login MT5 di container): [docs/DEPLOY.md](docs/DEPLOY.md).
+Uji dulu di komputer sendiri: [docs/LOCAL-TEST.md](docs/LOCAL-TEST.md) (mode simulasi, Claude, MT5 demo,
+dan skrip `scripts/smoke_test.py`). Setelah lulus, lanjut ke VPS:
+[docs/DEPLOY.md](docs/DEPLOY.md) (pilihan VPS, GitHub Secrets, login MT5 di container).
 
 ## Dashboard
 
