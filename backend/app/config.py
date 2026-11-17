@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     mt5_password: str | None = None
     mt5_server: str | None = None
     mt5_path: str | None = None
+    # Isi jika MT5 berjalan di container Wine (VPS Linux): host/port server RPyC mt5linux.
+    # Kosong = pakai library MetaTrader5 lokal (Windows).
+    mt5_bridge_host: str = ""
+    mt5_bridge_port: int = 8001
+    mt5_bridge_timeout_seconds: float = 60.0
 
     # Urutan sumber kalender berita, dipisah koma: myfxbook, forexfactory, none
     news_sources: str = "myfxbook,forexfactory"
