@@ -8,6 +8,8 @@ numpy>=1.26
 MetaTrader5>=5.0.45; sys_platform == "win32"
 # Klien RPyC untuk MT5 di container Wine (VPS Linux, lihat docs/DEPLOY.md)
 rpyc>=6.0,<7
+# Penjelasan AI memakai Claude (Anthropic API)
+anthropic>=2.9,<3
 
 # Untuk pengembangan / tes
 pytest>=8

@@ -30,7 +30,7 @@ di akun real kecuali `ALLOW_AUTO_ON_REAL_ACCOUNT=true`, dan batas lot/posisi tet
 
 ```
 GitHub (push ke main)
-  └─ GitHub Actions: tes 78 → build image → push ke ghcr.io → SSH ke VPS → docker compose up -d
+  └─ GitHub Actions: semua tes → build image → push ke ghcr.io → SSH ke VPS → docker compose up -d
 
 VPS Linux
   ├─ container app  (dashboard, port 127.0.0.1:8000)
@@ -70,9 +70,10 @@ MT5_SERVER=NamaBroker-Demo
 MT5_BRIDGE_HOST=mt5
 COMPOSE_PROFILES=mt5
 VNC_PASSWORD=password_kuat_untuk_layar_mt5
+ANTHROPIC_API_KEY=sk-ant-...      # opsional, untuk panel Penjelasan AI
 ```
 
-`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER` **tidak pernah** disimpan di repo atau di GitHub.
+`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`, dan `ANTHROPIC_API_KEY` **tidak pernah** disimpan di repo atau di GitHub.
 CI/CD hanya mengirim `docker-compose.yml` dan skrip deploy; file `.env` di VPS tidak disentuh.
 
 ## 3. Isi GitHub Secrets

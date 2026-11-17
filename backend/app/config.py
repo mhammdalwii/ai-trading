@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     auto_symbols: str = ",".join(SYMBOLS)
     allow_auto_on_real_account: bool = False  # akun real ditolak kecuali diizinkan eksplisit
 
+    # Penjelasan AI (Claude). Kosongkan ANTHROPIC_API_KEY = penjelasan otomatis berbasis aturan.
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-5-5"
+    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    ai_cache_seconds: int = 120  # klik ulang dalam jeda ini tidak memanggil API lagi
+
     symbol_suffix: str = ""
     symbol_map: dict[str, str] = Field(default_factory=dict)
 

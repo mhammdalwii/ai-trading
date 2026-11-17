@@ -101,3 +101,14 @@ dialog button:not(.exec) { background: var(--panel-2); color: var(--text); borde
   .panels, .bottom { grid-template-columns: 1fr; }
   .chart { height: 300px; }
 }
+
+/* Penjelasan AI */
+.ai-ask { display: flex; gap: 8px; margin: 8px 0; }
+.ai-ask input { flex: 1; min-width: 0; }
+.ai-out { font-size: 13px; line-height: 1.5; }
+.ai-out p { margin: 6px 0; }
+.ai-out ol { margin: 6px 0 0; padding-left: 20px; }
+.warn-text { color: var(--warn); }
+.ai-ask input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.ai-ask button { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.ai-ask button:disabled { color: var(--muted); cursor: wait; }
